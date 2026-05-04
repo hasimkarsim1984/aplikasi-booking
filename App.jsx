@@ -1,578 +1,368 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
-  getAuth, 
-  onAuthStateChanged, 
-  signInAnonymously, 
-  signInWithCustomToken 
-} from 'firebase/auth';
-import { 
   getFirestore, 
   collection, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
   addDoc, 
-  deleteDoc
+  onSnapshot, 
+  updateDoc, 
+  doc, 
+  deleteDoc,
+  query,
+  orderBy
 } from 'firebase/firestore';
 import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  Layout, 
   Calendar, 
+  Plus, 
+  CheckCircle, 
+  XCircle, 
   Clock, 
-  Building2, 
-  Plus,
-  LayoutDashboard,
-  Search,
+  User, 
+  Building, 
+  Trash2,
   Lock,
   LogOut,
-  Check,
-  X,
-  MapPin,
-  Fingerprint,
-  Upload,
-  AlertTriangle,
-  History,
-  ChevronRight,
-  PlusCircle,
-  Trash2,
-  Users,
-  Timer,
-  Database
+  Info,
+  AlertTriangle
 } from 'lucide-react';
 
-// Firebase Configuration
-const firebaseConfig = JSON.parse(__firebase_config);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'peminjaman-ruangan-001';
+// ==============================================================================
+// PENTING: Buka Firebase Console (https://console.firebase.google.com/)
+// 1. Pilih Proyek Anda > Project Settings (Ikon Gerigi)
+// 2. Scroll ke bawah ke bagian "Your apps"
+// 3. Salin nilai dari objek "firebaseConfig" dan tempel di bawah ini
+// ==============================================================================
+const firebaseConfig = {
+  apiKey: "ISI_API_KEY_ANDA", // Ganti dengan API Key asli (misal: AIzaSy...)
+  authDomain: "PROYEK-ANDA.firebaseapp.com",
+  projectId: "PROYEK-ANDA",
+  storageBucket: "PROYEK-ANDA.appspot.com",
+  messagingSenderId: "NOMOR_SENDER",
+  appId: "ID_APLIKASI_ANDA"
+};
+
+// Fungsi pengecekan apakah konfigurasi sudah diisi
+const isConfigValid = firebaseConfig.apiKey !== "ISI_API_KEY_ANDA";
+
+let db, auth;
+
+if (isConfigValid) {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app);
+}
+
+const appId = "peminjaman-ruangan-001";
 
 const App = () => {
-  const [view, setView] = useState('dashboard'); 
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [showRoomModal, setShowRoomModal] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [view, setView] = useState('dashboard');
   const [user, setUser] = useState(null);
-  
+  const [isAdmin, setIsAdmin] = useState(false);
   const [rooms, setRooms] = useState([]);
   const [bookings, setBookings] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(isConfigValid);
 
-  // 1. Authentikasi - Memperbaiki alur sign-in
+  const [formData, setFormData] = useState({
+    namaPeminjam: '', nimNip: '', namaRuangan: '', tanggal: '', jamMulai: '', jamSelesai: '', keterangan: ''
+  });
+
+  const [roomData, setRoomData] = useState({
+    nama: '', gedung: '', lantai: '', kapasitas: '', fasilitas: ''
+  });
+
   useEffect(() => {
+    if (!isConfigValid) return;
+
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (error) {
         console.error("Auth error:", error);
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
 
-  // 2. Real-time Data Listeners
-  useEffect(() => {
-    if (!user) return;
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        const qRooms = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
+        const unsubRooms = onSnapshot(qRooms, (snapshot) => {
+          setRooms(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          setLoading(false);
+        }, (err) => console.error("Room error:", err));
 
-    setIsLoading(true);
+        const qBookings = collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
+        const unsubBookings = onSnapshot(qBookings, (snapshot) => {
+          setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, (err) => console.error("Booking error:", err));
 
-    // Listener Ruangan (Public Data)
-    const qRooms = collection(db, 'artifacts', appId, 'public', 'data', 'rooms');
-    const unsubRooms = onSnapshot(qRooms, (snapshot) => {
-      const roomList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setRooms(roomList);
-      setIsLoading(false);
-    }, (err) => {
-      console.error("Rooms listener error:", err);
-      setIsLoading(false);
+        return () => {
+          unsubRooms();
+          unsubBookings();
+        };
+      }
     });
 
-    // Listener Bookings (Public Data)
-    const qBookings = collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
-    const unsubBookings = onSnapshot(qBookings, (snapshot) => {
-      const bookingList = snapshot.docs.map(doc => ({ idBooking: doc.id, ...doc.data() }));
-      setBookings(bookingList);
-    }, (err) => console.error("Bookings listener error:", err));
-
-    return () => {
-      unsubRooms();
-      unsubBookings();
-    };
-  }, [user]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => clearInterval(timer);
+    return () => unsubscribeAuth();
   }, []);
 
-  const stats = {
-    pending: bookings.filter(b => b.status === 'Pending').length,
-    approved: bookings.filter(b => b.status === 'Disetujui').length,
-    rejected: bookings.filter(b => b.status === 'Ditolak').length,
-  };
-
-  const handleLogin = (e) => {
+  // Handlers
+  const handleBookingSubmit = async (e) => {
     e.preventDefault();
-    if (e.target.username.value === 'admin' && e.target.password.value === '123') {
-      setIsAdmin(true);
+    if (!isConfigValid || !user) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), {
+        ...formData,
+        status: 'Pending',
+        timestamp: new Date().toISOString()
+      });
+      alert("Pengajuan berhasil dikirim!");
       setView('dashboard');
+      setFormData({ namaPeminjam: '', nimNip: '', namaRuangan: '', tanggal: '', jamMulai: '', jamSelesai: '', keterangan: '' });
+    } catch (err) { console.error(err); }
+  };
+
+  const handleAddRoom = async (e) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'rooms'), roomData);
+      setRoomData({ nama: '', gedung: '', lantai: '', kapasitas: '', fasilitas: '' });
+      alert("Ruangan berhasil ditambah!");
+    } catch (err) { console.error(err); }
+  };
+
+  const updateBookingStatus = async (id, status) => {
+    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id);
+    await updateDoc(docRef, { status });
+  };
+
+  const handleAdminLogin = () => {
+    const userPrompt = prompt("Username:");
+    const passPrompt = prompt("Password:");
+    if (userPrompt === 'admin' && passPrompt === '123') {
+      setIsAdmin(true);
+      alert("Login Admin Berhasil");
     } else {
-      setLoginError('Username atau Password salah!');
+      alert("Login Gagal");
     }
   };
 
-  const handleAddRoom = async (newRoom) => {
-    if (!user) return;
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'rooms'), newRoom);
-      setShowRoomModal(false);
-    } catch (error) {
-      console.error("Error adding room:", error);
-    }
-  };
-
-  const handleDeleteRoom = async (id) => {
-    if (!user) return;
-    if (window.confirm('Hapus ruangan ini?')) {
-      try {
-        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', id));
-      } catch (error) {
-        console.error("Error deleting room:", error);
-      }
-    }
-  };
-
-  const handleUpdateStatus = async (id, status) => {
-    if (!user) return;
-    try {
-      const bookingRef = doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id);
-      await setDoc(bookingRef, { status }, { merge: true });
-    } catch (error) {
-      console.error("Error updating status:", error);
-    }
-  };
-
-  const checkIsOccupied = (roomName) => {
-    const nowInMins = currentTime.getHours() * 60 + currentTime.getMinutes();
-    const today = currentTime.toISOString().split('T')[0];
-    
-    return bookings.find(b => {
-      if (b.namaRuangan === roomName && b.tanggal === today && b.status === 'Disetujui') {
-        const [hStart, mStart] = b.jamMulai.split(':').map(Number);
-        const [hEnd, mEnd] = b.jamSelesai.split(':').map(Number);
-        const start = hStart * 60 + mStart;
-        const end = hEnd * 60 + mEnd;
-        return nowInMins >= start && nowInMins <= end;
-      }
-      return false;
-    });
-  };
-
-  const filteredRooms = rooms.filter(r => 
-    r.nama.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.gedung.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const filteredBookings = bookings.filter(b => 
-    b.namaPeminjam.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    b.namaRuangan.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  if (isLoading) {
+  // Tampilan jika Konfigurasi Belum Diisi
+  if (!isConfigValid) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-500 font-bold text-sm animate-pulse">Menghubungkan ke Database...</p>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 text-center font-sans">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-amber-100 max-w-md">
+          <div className="bg-amber-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
+            <AlertTriangle size={32} />
+          </div>
+          <h1 className="text-xl font-bold mb-2 text-slate-800">Firebase Belum Siap</h1>
+          <p className="text-slate-500 text-sm mb-6">
+            Anda perlu memasukkan <b>Firebase Config</b> asli ke dalam file <code>App.jsx</code> di GitHub agar aplikasi dapat terhubung ke database.
+          </p>
+          <div className="bg-slate-800 text-white p-3 rounded-xl text-left text-xs font-mono mb-4 overflow-x-auto">
+            const firebaseConfig = &#123;<br/>
+            &nbsp;&nbsp;apiKey: "AIzaSy...",<br/>
+            &nbsp;&nbsp;...<br/>
+            &#125;
+          </div>
+          <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="block w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors">
+            Buka Firebase Console
+          </a>
         </div>
       </div>
     );
   }
 
+  if (loading) return <div className="flex items-center justify-center h-screen font-sans">Menghubungkan ke database...</div>;
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-20">
-      <nav className="bg-white border-b sticky top-0 z-50 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-xl text-blue-600 cursor-pointer" onClick={() => setView('dashboard')}>
-            <Building2 size={28} />
-            <span className="hidden md:inline text-slate-800">Ruang<span className="text-blue-600">Pusat</span></span>
-          </div>
-          
-          <div className="flex gap-1 md:gap-2">
-            <button onClick={() => setView('dashboard')} className={`p-2 md:px-4 md:py-2 rounded-xl transition flex items-center gap-2 ${view === 'dashboard' ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-100'}`}>
-              <LayoutDashboard size={18} /> <span className="hidden md:inline font-semibold text-sm">Ruangan</span>
+      {/* Navbar */}
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 px-4 py-3 flex justify-between items-center shadow-sm">
+        <div className="flex items-center gap-2">
+          <Building className="text-blue-600" size={24} />
+          <h1 className="font-bold text-lg tracking-tight">E-Booking Ruangan</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          {!isAdmin ? (
+            <button onClick={handleAdminLogin} className="p-2 hover:bg-slate-100 rounded-full">
+              <Lock size={20} />
             </button>
-            <button onClick={() => setView('riwayat')} className={`p-2 md:px-4 md:py-2 rounded-xl transition flex items-center gap-2 ${view === 'riwayat' ? 'bg-blue-50 text-blue-600' : 'text-slate-500 hover:bg-slate-100'}`}>
-              <History size={18} /> <span className="hidden md:inline font-semibold text-sm">Riwayat</span>
-            </button>
-            {!isAdmin && (
-              <button onClick={() => setView('form')} className="p-2 md:px-4 md:py-2 rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-200 flex items-center gap-2 hover:bg-blue-700 transition">
-                <Plus size={18} /> <span className="hidden md:inline font-semibold text-sm">Booking</span>
-              </button>
-            )}
-            {isAdmin ? (
-              <button onClick={() => setIsAdmin(false)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition flex items-center gap-2">
-                <LogOut size={18} /> <span className="hidden md:inline font-semibold text-xs uppercase">Keluar Admin</span>
-              </button>
-            ) : (
-              <button onClick={() => setView('login')} className="p-2 text-slate-400 hover:text-blue-600 rounded-xl transition">
-                <Lock size={18} />
-              </button>
-            )}
-          </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+              <span className="text-xs font-semibold text-blue-700">ADMIN MODE</span>
+              <button onClick={() => setIsAdmin(false)} className="text-blue-700"><LogOut size={16}/></button>
+            </div>
+          )}
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto p-4 md:p-8">
-        {view === 'login' && (
-          <div className="max-w-md mx-auto mt-12 bg-white p-8 rounded-3xl border shadow-xl">
-            <h2 className="text-2xl font-bold mb-6 text-center text-slate-800">Admin Login</h2>
-            <form onSubmit={handleLogin} className="space-y-4">
-              <input name="username" placeholder="Username" required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" />
-              <input name="password" type="password" placeholder="Password" required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" />
-              {loginError && <p className="text-rose-500 text-xs font-bold">{loginError}</p>}
-              <button className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition">Masuk</button>
+      {/* Main Content */}
+      <main className="max-w-4xl mx-auto p-4 mt-4">
+        {view === 'dashboard' && (
+          <div className="space-y-6">
+            <header className="flex justify-between items-end">
+              <div>
+                <h2 className="text-2xl font-bold">Status Ruangan</h2>
+                <p className="text-slate-500 text-sm">Daftar ruangan tersedia saat ini</p>
+              </div>
+              <button onClick={() => setView('booking')} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md flex items-center gap-2 hover:bg-blue-700 active:scale-95 transition-all">
+                <Plus size={18} /> Booking
+              </button>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {rooms.map((room) => (
+                <div key={room.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="bg-blue-50 p-2 rounded-xl text-blue-600">
+                      <Layout size={24} />
+                    </div>
+                    {isAdmin && (
+                      <button onClick={async () => {
+                        if(confirm('Hapus ruangan?')) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', room.id));
+                      }} className="text-red-400 p-1"><Trash2 size={18} /></button>
+                    )}
+                  </div>
+                  <h3 className="text-xl font-bold mb-1">{room.nama}</h3>
+                  <p className="text-slate-500 text-sm mb-4">{room.gedung}, Lantai {room.lantai}</p>
+                  <div className="grid grid-cols-2 gap-2 text-xs font-medium text-slate-600">
+                    <div className="bg-slate-50 px-3 py-2 rounded-lg flex items-center gap-2">
+                      <User size={14} className="text-slate-400" /> {room.kapasitas} Orang
+                    </div>
+                    <div className="bg-slate-50 px-3 py-2 rounded-lg flex items-center gap-2 truncate">
+                      <Info size={14} className="text-slate-400" /> {room.fasilitas}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {rooms.length === 0 && <div className="text-center py-12 text-slate-400 italic">Belum ada ruangan yang terdaftar.</div>}
+          </div>
+        )}
+
+        {view === 'booking' && (
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl max-w-lg mx-auto">
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
+              <Calendar className="text-blue-600" /> Form Peminjaman
+            </h2>
+            <form onSubmit={handleBookingSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <input required placeholder="Nama Lengkap" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={formData.namaPeminjam} onChange={e => setFormData({...formData, namaPeminjam: e.target.value})} />
+                <input required placeholder="NIM / NIP" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={formData.nimNip} onChange={e => setFormData({...formData, nimNip: e.target.value})} />
+                <select required className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl" value={formData.namaRuangan} onChange={e => setFormData({...formData, namaRuangan: e.target.value})}>
+                  <option value="">Pilih Ruangan</option>
+                  {rooms.map(r => <option key={r.id} value={r.nama}>{r.nama}</option>)}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                   <div className="space-y-1">
+                     <label className="text-xs text-slate-500 ml-1">Tanggal</label>
+                     <input required type="date" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl" value={formData.tanggal} onChange={e => setFormData({...formData, tanggal: e.target.value})} />
+                   </div>
+                   <div className="space-y-1">
+                     <label className="text-xs text-slate-500 ml-1">Jam Mulai</label>
+                     <input required type="time" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl" value={formData.jamMulai} onChange={e => setFormData({...formData, jamMulai: e.target.value})} />
+                   </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-500 ml-1">Jam Selesai</label>
+                  <input required type="time" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl" value={formData.jamSelesai} onChange={e => setFormData({...formData, jamSelesai: e.target.value})} />
+                </div>
+                <textarea placeholder="Tujuan / Keterangan" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl h-24" value={formData.keterangan} onChange={e => setFormData({...formData, keterangan: e.target.value})}></textarea>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setView('dashboard')} className="flex-1 border border-slate-200 py-3 rounded-xl font-semibold">Batal</button>
+                <button type="submit" className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-blue-700 active:scale-95 transition-all">Kirim</button>
+              </div>
             </form>
           </div>
         )}
 
-        {view === 'dashboard' && (
-          <div className="space-y-8">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h1 className="text-2xl font-bold text-slate-800">Status & Jadwal Ruangan</h1>
-                <p className="text-slate-500 text-sm italic flex items-center gap-1">
-                  <Database size={14} className="text-emerald-500" /> Terhubung ke database awan.
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="relative flex-1 md:w-64">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                  <input type="text" placeholder="Cari ruangan..." className="pl-10 pr-4 py-2 border border-slate-200 rounded-2xl w-full focus:ring-4 focus:ring-blue-100 outline-none text-sm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                </div>
-                {isAdmin && (
-                  <button onClick={() => setShowRoomModal(true)} className="px-4 py-2 bg-blue-600 text-white rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-blue-700 transition shadow-lg shadow-blue-200">
-                    <PlusCircle size={18} /> Tambah
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {filteredRooms.length === 0 ? (
-               <div className="bg-white border p-12 rounded-3xl text-center">
-                  <Building2 size={48} className="mx-auto text-slate-200 mb-4" />
-                  <h3 className="font-bold text-slate-400 text-lg">Belum ada data ruangan.</h3>
-                  {isAdmin && <p className="text-slate-300 text-sm">Klik tombol Tambah untuk memulai.</p>}
-               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                {filteredRooms.map((room) => {
-                  const activeBooking = checkIsOccupied(room.nama);
-                  const today = currentTime.toISOString().split('T')[0];
-                  const upcomingBookings = bookings
-                    .filter(b => b.namaRuangan === room.nama && b.status === 'Disetujui' && b.tanggal >= today)
-                    .sort((a, b) => (a.tanggal + a.jamMulai).localeCompare(b.tanggal + b.jamMulai));
-
-                  return (
-                    <div key={room.id} className={`bg-white rounded-3xl border ${activeBooking ? 'border-orange-200 ring-2 ring-orange-50' : 'border-slate-200'} flex flex-col md:flex-row overflow-hidden hover:shadow-xl transition-all duration-300`}>
-                      <div className="p-6 md:w-2/5 border-b md:border-b-0 md:border-r border-slate-100 bg-white">
-                        <div className="flex items-center gap-2 text-blue-600 text-[10px] font-black uppercase tracking-wider mb-2">
-                          <MapPin size={12} /> {room.gedung} • Lt. {room.lantai}
-                        </div>
-                        <h3 className="text-xl font-bold text-slate-800 mb-1">{room.nama}</h3>
-                        <p className="text-slate-400 text-xs mb-4">Kapasitas: {room.kapasitas} Orang</p>
-                        
-                        <div className="space-y-3 mb-6">
-                          <div className="flex items-center gap-2">
-                            {activeBooking ? (
-                              <span className="flex items-center gap-1 bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-[9px] font-black animate-pulse uppercase">
-                                <Timer size={10} /> Sedang Digunakan
-                              </span>
-                            ) : (
-                              <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase">Tersedia</span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-400 leading-relaxed bg-slate-50 p-2 rounded-lg border border-slate-100">
-                            <span className="font-bold text-slate-600">Fasilitas:</span> {room.fasilitas}
-                          </div>
-                        </div>
-
-                        <div className="mt-auto">
-                          {isAdmin ? (
-                            <button onClick={() => handleDeleteRoom(room.id)} className="w-full flex items-center justify-center gap-2 py-2 text-rose-500 bg-rose-50 hover:bg-rose-100 rounded-xl transition text-xs font-bold"><Trash2 size={14} /> Hapus Ruangan</button>
-                          ) : (
-                            <button onClick={() => setView('form')} className="w-full py-2 bg-blue-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-blue-700 transition shadow-md shadow-blue-100">
-                              Booking Ruangan <ChevronRight size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="p-6 flex-1 bg-slate-50/50">
-                        <h4 className="text-[11px] font-black text-slate-400 uppercase mb-4 flex items-center gap-2">
-                          <Users size={14} /> Daftar Peminjam (Jadwal)
-                        </h4>
-                        <div className="space-y-3 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
-                          {upcomingBookings.length > 0 ? upcomingBookings.map(b => {
-                            const isToday = b.tanggal === today;
-                            const isNow = activeBooking && b.idBooking === activeBooking.idBooking;
-
-                            return (
-                              <div key={b.idBooking} className={`p-3 rounded-2xl border transition-all ${isNow ? 'bg-orange-50 border-orange-200' : 'bg-white border-slate-100'}`}>
-                                <div className="flex justify-between items-start gap-2">
-                                  <div className="min-w-0">
-                                    <div className="text-xs font-bold text-slate-800 line-clamp-1">{b.namaPeminjam}</div>
-                                    <div className="text-[9px] text-blue-500 font-bold flex items-center gap-1 mt-0.5 opacity-80 uppercase tracking-tight">
-                                      <Fingerprint size={10} /> {b.nimNip}
-                                    </div>
-                                    <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-1">
-                                      <Clock size={10} className="text-blue-400" /> {b.jamMulai} - {b.jamSelesai} WIB
-                                    </div>
-                                  </div>
-                                  <div className="text-right shrink-0">
-                                    <div className={`text-[9px] font-black px-2 py-0.5 rounded-lg ${isToday ? 'bg-blue-100 text-blue-600' : 'bg-slate-200 text-slate-600'}`}>
-                                      {isToday ? 'HARI INI' : b.tanggal}
-                                    </div>
-                                  </div>
-                                </div>
-                                {isNow && <div className="mt-2 text-[9px] font-bold text-orange-600 flex items-center gap-1 uppercase tracking-tighter italic">Sedang Berlangsung...</div>}
-                              </div>
-                            );
-                          }) : (
-                            <div className="flex flex-col items-center justify-center py-8 text-slate-300">
-                              <Calendar size={24} strokeWidth={1.5} className="mb-2 opacity-50" />
-                              <p className="text-[10px] italic">Tidak ada jadwal mendatang</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+        {view === 'history' && (
+          <div className="space-y-4">
+             <h2 className="text-2xl font-bold">Riwayat Pengajuan</h2>
+             {bookings.length === 0 ? (
+               <div className="text-center py-12 text-slate-400">Belum ada riwayat booking.</div>
+             ) : (
+               bookings.map((book) => (
+                 <div key={book.id} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                   <div className="flex justify-between items-start">
+                     <div>
+                       <span className={`text-[10px] font-bold uppercase px-2 py-1 rounded-full ${
+                         book.status === 'Disetujui' ? 'bg-green-100 text-green-700' : 
+                         book.status === 'Ditolak' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                       }`}>
+                         {book.status}
+                       </span>
+                       <h3 className="font-bold text-lg mt-2">{book.namaRuangan}</h3>
+                       <p className="text-sm text-slate-600 font-medium">{book.namaPeminjam} ({book.nimNip})</p>
+                     </div>
+                     {isAdmin && book.status === 'Pending' && (
+                       <div className="flex gap-2">
+                         <button onClick={() => updateBookingStatus(book.id, 'Disetujui')} className="p-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100"><CheckCircle size={20}/></button>
+                         <button onClick={() => updateBookingStatus(book.id, 'Ditolak')} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"><XCircle size={20}/></button>
+                       </div>
+                     )}
+                   </div>
+                   <div className="mt-4 flex gap-4 text-xs text-slate-500 border-t border-slate-50 pt-3">
+                     <span className="flex items-center gap-1"><Calendar size={14}/> {book.tanggal}</span>
+                     <span className="flex items-center gap-1"><Clock size={14}/> {book.jamMulai} - {book.jamSelesai}</span>
+                   </div>
+                 </div>
+               ))
+             )}
           </div>
         )}
 
-        {view === 'riwayat' && (
-          <div className="space-y-6">
-            <div className="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><History className="text-blue-600" /> Riwayat & Status</h1>
-                <p className="text-slate-500 text-sm italic">Data tersimpan secara permanen di database.</p>
+        {view === 'admin' && isAdmin && (
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xl max-w-lg mx-auto">
+            <h2 className="text-xl font-bold mb-6">Tambah Ruangan Baru</h2>
+            <form onSubmit={handleAddRoom} className="space-y-4">
+              <input required placeholder="Nama Ruangan" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={roomData.nama} onChange={e => setRoomData({...roomData, nama: e.target.value})} />
+              <div className="grid grid-cols-2 gap-4">
+                <input required placeholder="Gedung" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={roomData.gedung} onChange={e => setRoomData({...roomData, gedung: e.target.value})} />
+                <input required placeholder="Lantai" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={roomData.lantai} onChange={e => setRoomData({...roomData, lantai: e.target.value})} />
               </div>
-              <div className="grid grid-cols-3 gap-3 w-full lg:w-auto text-center">
-                <div className="bg-white border px-4 py-2 rounded-2xl shadow-sm"><div className="text-[9px] font-black text-blue-500 uppercase">Proses</div><div className="text-lg font-bold text-slate-800">{stats.pending}</div></div>
-                <div className="bg-emerald-50 border border-emerald-100 px-4 py-2 rounded-2xl shadow-sm"><div className="text-[9px] font-black text-emerald-600 uppercase">Setuju</div><div className="text-lg font-bold text-slate-800">{stats.approved}</div></div>
-                <div className="bg-rose-50 border border-rose-100 px-4 py-2 rounded-2xl shadow-sm"><div className="text-[9px] font-black text-rose-600 uppercase">Tolak</div><div className="text-lg font-bold text-slate-800">{stats.rejected}</div></div>
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[700px]">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase text-center">No</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase">Peminjam</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase">Ruangan & Waktu</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase text-center">Status</th>
-                    {isAdmin && <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase text-right">Aksi</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredBookings.length > 0 ? filteredBookings.map((booking, index) => (
-                    <tr key={booking.idBooking} className="hover:bg-slate-50/80 transition-colors text-sm">
-                      <td className="px-6 py-5 text-center text-slate-400 font-mono text-xs">{index + 1}</td>
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold uppercase text-xs">{booking.namaPeminjam?.charAt(0)}</div>
-                          <div>
-                            <div className="font-bold text-slate-800">{booking.namaPeminjam}</div>
-                            <div className="text-[10px] text-slate-400 flex items-center gap-1 uppercase tracking-tight"><Fingerprint size={10} /> {booking.nimNip}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5">
-                        <div className="font-semibold text-slate-700">{booking.namaRuangan}</div>
-                        <div className="flex items-center gap-3 text-[10px] text-slate-500 mt-1">
-                          <span className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded"><Calendar size={10}/> {booking.tanggal}</span>
-                          <span className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded"><Clock size={10}/> {booking.jamMulai}-{booking.jamSelesai}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5 text-center"><StatusBadge status={booking.status} /></td>
-                      {isAdmin && (
-                        <td className="px-6 py-5 text-right">
-                          {booking.status === 'Pending' ? (
-                            <div className="flex justify-end gap-2">
-                              <button onClick={() => handleUpdateStatus(booking.idBooking, 'Disetujui')} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all"><Check size={16} /></button>
-                              <button onClick={() => handleUpdateStatus(booking.idBooking, 'Ditolak')} className="p-2 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-600 hover:text-white transition-all"><X size={16} /></button>
-                            </div>
-                          ) : <span className="text-[10px] text-slate-300 italic uppercase">Selesai</span>}
-                        </td>
-                      )}
-                    </tr>
-                  )) : <tr><td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-slate-300 italic">Data tidak ditemukan.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {view === 'form' && (
-          <div className="max-w-2xl mx-auto bg-white p-8 rounded-3xl border shadow-xl">
-            <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-2xl font-bold flex items-center gap-2 text-slate-800"><Plus className="text-blue-600" /> Form Booking</h2>
-              <button onClick={() => setView('dashboard')} className="p-2 hover:bg-slate-100 rounded-full transition"><X size={20}/></button>
-            </div>
-            <BookingForm 
-              rooms={rooms} 
-              onSubmit={async (data) => { 
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), {
-                  ...data,
-                  status: 'Pending',
-                  waktuPengajuan: new Date().toISOString()
-                });
-                setView('riwayat'); 
-              }} 
-              existingBookings={bookings} 
-            />
+              <input required type="number" placeholder="Kapasitas (Orang)" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={roomData.kapasitas} onChange={e => setRoomData({...roomData, kapasitas: e.target.value})} />
+              <input required placeholder="Fasilitas (pisahkan dengan koma)" className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none" value={roomData.fasilitas} onChange={e => setRoomData({...roomData, fasilitas: e.target.value})} />
+              <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-all">Simpan Ruangan</button>
+            </form>
           </div>
         )}
       </main>
 
-      {showRoomModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden">
-            <div className="bg-blue-600 p-6 text-white flex justify-between items-center"><h3 className="font-bold text-lg flex items-center gap-2"><Building2 size={20}/> Daftarkan Ruangan</h3><button onClick={() => setShowRoomModal(false)}><X size={20}/></button></div>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const fd = new FormData(e.target);
-              handleAddRoom({ 
-                nama: fd.get('nama'), 
-                kapasitas: fd.get('kapasitas'), 
-                gedung: fd.get('gedung'), 
-                lantai: fd.get('lantai'), 
-                fasilitas: fd.get('fasilitas') 
-              });
-            }} className="p-8 space-y-4">
-              <input name="nama" required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none" placeholder="Nama Ruangan" />
-              <div className="grid grid-cols-2 gap-4">
-                <input name="kapasitas" type="number" required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none" placeholder="Kapasitas" />
-                <input name="lantai" type="number" required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none" placeholder="Lantai" />
-              </div>
-              <select name="gedung" className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none">
-                {['A','B','C','D','E','G'].map(g => <option key={g} value={`Gedung ${g}`}>Gedung {g}</option>)}
-              </select>
-              <textarea name="fasilitas" required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none" placeholder="Fasilitas (pisahkan dengan koma)..."></textarea>
-              <button className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold">Simpan Ruangan</button>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 flex justify-around items-center md:hidden shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <button onClick={() => setView('dashboard')} className={`flex flex-col items-center gap-1 ${view === 'dashboard' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <Layout size={20} />
+          <span className="text-[10px] font-bold">Dashboard</span>
+        </button>
+        <button onClick={() => setView('history')} className={`flex flex-col items-center gap-1 ${view === 'history' ? 'text-blue-600' : 'text-slate-400'}`}>
+          <Clock size={20} />
+          <span className="text-[10px] font-bold">Riwayat</span>
+        </button>
+        {isAdmin && (
+          <button onClick={() => setView('admin')} className={`flex flex-col items-center gap-1 ${view === 'admin' ? 'text-blue-600' : 'text-slate-400'}`}>
+            <Plus size={20} />
+            <span className="text-[10px] font-bold">Admin</span>
+          </button>
+        )}
+      </nav>
 
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-4px); }
-          75% { transform: translateX(4px); }
-        }
-        .animate-shake { animation: shake 0.2s ease-in-out 0s 2; }
-      `}</style>
+      {/* Desktop Navigation */}
+      <div className="hidden md:flex fixed left-0 top-1/2 -translate-y-1/2 bg-white border border-slate-200 ml-4 rounded-2xl flex-col p-2 shadow-xl gap-4">
+        <button onClick={() => setView('dashboard')} className={`p-3 rounded-xl ${view === 'dashboard' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:bg-slate-50'}`}><Layout/></button>
+        <button onClick={() => setView('history')} className={`p-3 rounded-xl ${view === 'history' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:bg-slate-50'}`}><Clock/></button>
+        {isAdmin && <button onClick={() => setView('admin')} className={`p-3 rounded-xl ${view === 'admin' ? 'bg-blue-50 text-blue-600' : 'text-slate-400 hover:bg-slate-50'}`}><Plus/></button>}
+      </div>
     </div>
-  );
-};
-
-const StatusBadge = ({ status }) => {
-  const styles = { "Disetujui": "bg-emerald-100 text-emerald-700 border-emerald-200", "Pending": "bg-blue-100 text-blue-700 border-blue-200", "Ditolak": "bg-rose-100 text-rose-700 border-rose-200" };
-  return <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${styles[status]}`}>{status}</span>;
-};
-
-const BookingForm = ({ rooms, onSubmit, existingBookings }) => {
-  const [formData, setFormData] = useState({ namaRuangan: '', tanggal: '', jamMulai: '', jamSelesai: '', namaPeminjam: '', nimNip: '', keterangan: '', suratIzin: null });
-  const [conflict, setConflict] = useState(false);
-  const [timeError, setTimeError] = useState(false);
-  const [needsSpecialPermit, setNeedsSpecialPermit] = useState(false);
-
-  useEffect(() => {
-    if (formData.namaRuangan && formData.tanggal && formData.jamMulai && formData.jamSelesai) {
-      const toMins = (t) => { if (!t) return 0; const [h, m] = t.split(':'); return (parseInt(h, 10) * 60) + parseInt(m, 10); };
-      const startNew = toMins(formData.jamMulai);
-      const endNew = toMins(formData.jamSelesai);
-      
-      setTimeError(startNew >= endNew);
-
-      setConflict(existingBookings.some(b => b.namaRuangan === formData.namaRuangan && b.tanggal === formData.tanggal && b.status !== 'Ditolak' && (startNew < toMins(b.jamSelesai)) && (endNew > toMins(b.jamMulai))));
-      
-      const day = new Date(formData.tanggal).getDay();
-      setNeedsSpecialPermit(day === 0 || day === 6 || startNew < 420 || endNew > 1020);
-    }
-  }, [formData, existingBookings]);
-
-  return (
-    <form onSubmit={(e) => { e.preventDefault(); if(!conflict && !timeError) onSubmit(formData); }} className="space-y-5">
-      {timeError && (
-        <div className="bg-rose-50 border-2 border-rose-200 p-4 rounded-2xl flex items-center gap-3 text-rose-700 font-bold text-xs animate-shake">
-          <Clock size={20} className="shrink-0" />
-          <span>Waktu tidak valid! Jam mulai harus lebih awal dari jam selesai.</span>
-        </div>
-      )}
-
-      {conflict && !timeError && (
-        <div className="bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl flex items-center gap-3 text-orange-700 font-bold text-xs">
-          <AlertTriangle size={20} className="shrink-0" />
-          <span>Jadwal Bentrok! Ruangan sudah dipesan pada waktu tersebut.</span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-4">
-        <input required placeholder="Nama Lengkap" className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => setFormData({...formData, namaPeminjam: e.target.value})} />
-        <input required placeholder="NIM / NIP" className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => setFormData({...formData, nimNip: e.target.value})} />
-      </div>
-      <select required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => setFormData({...formData, namaRuangan: e.target.value})}>
-        <option value="">-- Pilih Ruangan --</option>
-        {rooms.map(r => <option key={r.id} value={r.nama}>{r.nama}</option>)}
-      </select>
-      <div className="grid grid-cols-3 gap-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">Tanggal</label>
-          <input type="date" required className="w-full px-3 py-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" onChange={(e) => setFormData({...formData, tanggal: e.target.value})} />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">Mulai</label>
-          <input type="time" required className={`w-full px-3 py-3 border rounded-xl outline-none focus:ring-2 ${timeError ? 'bg-rose-50 border-rose-300 ring-rose-100' : 'bg-slate-50 border-slate-200 focus:ring-blue-500'}`} onChange={(e) => setFormData({...formData, jamMulai: e.target.value})} />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold text-slate-400 ml-2 uppercase">Selesai</label>
-          <input type="time" required className={`w-full px-3 py-3 border rounded-xl outline-none focus:ring-2 ${timeError ? 'bg-rose-50 border-rose-300 ring-rose-100' : 'bg-slate-50 border-slate-200 focus:ring-blue-500'}`} onChange={(e) => setFormData({...formData, jamSelesai: e.target.value})} />
-        </div>
-      </div>
-      {needsSpecialPermit && (
-        <div className="h-24 border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center bg-blue-50/30 relative hover:border-blue-300 transition-colors">
-          <input type="file" required className="absolute inset-0 opacity-0 cursor-pointer" />
-          <Upload className="text-blue-400" size={20} />
-          <span className="text-[10px] font-bold text-blue-600 mt-1 uppercase tracking-tight text-center px-4">Butuh Surat Izin (Luar Jam Kerja/Libur)</span>
-          <span className="text-[9px] text-slate-400">Pilih File atau Drag & Drop</span>
-        </div>
-      )}
-      <textarea required className="w-full px-4 py-3 bg-slate-50 border rounded-xl outline-none min-h-[100px] focus:ring-2 focus:ring-blue-500" placeholder="Detail Kegiatan..." onChange={(e) => setFormData({...formData, keterangan: e.target.value})}></textarea>
-      <button 
-        disabled={conflict || timeError} 
-        className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold disabled:bg-slate-300 shadow-lg shadow-blue-100 hover:bg-blue-700 transition transform active:scale-95 disabled:cursor-not-allowed"
-      >
-        Ajukan Peminjaman
-      </button>
-    </form>
   );
 };
 
